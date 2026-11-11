@@ -2,6 +2,8 @@
 name: repo-hygiene-audit
 description: Deliberate audit of whether a git repository contains overcommitted content - files that no tool flags but that should not be public regardless. Secrets, infrastructure exposure via URLs/ports/project config, internal vocabulary and architecture leaks, planning/process prose, generated artifacts, machine-local state, PII, and policy-class files like lockfiles. Use when asked to check if a repo has stuff committed that shouldn't be there, or to decide whether a specific file belongs in a repo. (Not for - post-detection rotation or vault/secret-store ops, runtime secret detection in running apps, container-image scanning, non-git directories, or writing hooks/CI pipelines.)
 disable-model-invocation: true
+metadata:
+  source: https://github.com/vreicken/repo-hygiene-audit
 ---
 
 # Repo hygiene audit
