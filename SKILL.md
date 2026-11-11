@@ -86,7 +86,9 @@ Bottom-line first (`X findings, Y needs-review, N cleared`), then findings
 rows (category, verdict, evidence ref), then the not-done rows exactly as
 the run report lists them. Explanation of done/not-done comes from the run
 report; only judgment explanation comes from you. End with a next-sweep
-note only if something structural came up. Do not pad.
+note only if something structural came up. Status words and the limits of
+what was checked: references/bookends.md — read it once, before writing
+any report. Do not pad.
 
 ## Fixes — only on request, never applied
 
