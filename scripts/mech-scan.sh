@@ -38,12 +38,18 @@ BASE="$PWD/.local/hygiene-audit/baseline/gitleaks.json"
 bl=""
 [ -f "$BASE" ] && bl="--baseline-path $BASE"
 if command -v gitleaks >/dev/null 2>&1; then
-  if gitleaks git --redact --report-format json --report-path "$RUN/gitleaks.json" $bl >/dev/null 2>&1; then
-    row "{\"tool\":\"gitleaks\",\"status\":\"OK\",\"mode\":\"git --redact$([ -n "$bl" ] && echo ' --baseline')\",\"output\":\"gitleaks.json\"}"
+  # gitleaks exits non-zero both when it FINDS leaks and when it breaks.
+  # A report file written => it ran to completion => findings, not failure.
+  rm -f "$RUN/gitleaks.json"
+  gitleaks git --redact --report-format json --report-path "$RUN/gitleaks.json" $bl >/dev/null 2>&1
+  glrc=$?
+  if [ "$glrc" -eq 0 ] || [ -s "$RUN/gitleaks.json" ]; then
+    gst=OK; [ "$glrc" -ne 0 ] && gst=FINDINGS
+    row "{\"tool\":\"gitleaks\",\"status\":\"$gst\",\"mode\":\"git --redact$([ -n "$bl" ] && echo ' --baseline')\",\"output\":\"gitleaks.json\"}"
     if [ -n "$bl" ]; then
-      rr "gitleaks history scan ................ OK (gitleaks.json; findings are NEW since baseline — values redacted)"
+      rr "gitleaks history scan ................ $gst (gitleaks.json; findings are NEW since baseline - values redacted)"
     else
-      rr "gitleaks history scan ................ OK (gitleaks.json; full-history first sweep — values redacted)"
+      rr "gitleaks history scan ................ $gst (gitleaks.json; full-history first sweep - values redacted)"
     fi
   else
     row '{"tool":"gitleaks","status":"FAILED"}'
@@ -93,7 +99,7 @@ if [ -s "$DENYLIST" ] && [ "$armed" = "PROBE-ARMED" ]; then
     done < <(git branch -a --format='%(refname:short)')
     while IFS= read -r f; do
       [ -n "$f" ] || continue
-      grep -Enm3 -- "$pat" -- "$f" 2>/dev/null | while IFS= read -r l; do
+      grep -Enm3 -e "$pat" -- "$f" 2>/dev/null | while IFS= read -r l; do
         row "{\"q\":\"Q2/Q3/Q8\",\"file\":\"$f\",\"line\":${l%%:*},\"pattern_class\":\"denylist\"}"
       done
     done < <(git ls-files -z | xargs -0 -n1 echo 2>/dev/null)

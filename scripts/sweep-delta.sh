@@ -29,7 +29,9 @@ else
 fi
 
 git ls-files -z | xargs -0 md5sum 2>/dev/null | sort > "$RUNDIR/sweep-manifest"
-prev="$RUNDIR/.sweep-manifest.prev"
+mkdir -p "$PWD/.local/hygiene-audit/baseline"
+# stable path: run dirs are timestamped, so a per-run prev can never be found
+prev="$PWD/.local/hygiene-audit/baseline/sweep-manifest.prev"
 if [ -f "$prev" ]; then
   if diff -q "$prev" "$RUNDIR/sweep-manifest" >/dev/null 2>&1; then
     rr "sweep vs previous .................... unchanged (hash-verified)"
@@ -39,7 +41,7 @@ if [ -f "$prev" ]; then
 else
   rr "sweep vs previous .................... first sweep (baseline stored)"
 fi
-mv "$RUNDIR/sweep-manifest" "$prev"
+cp "$RUNDIR/sweep-manifest" "$prev"
 
 if ! grep -q 'hygiene-audit' .gitignore 2>/dev/null; then
   printf '.local/hygiene-audit/\n' > "$RUNDIR/gitignore.draft"

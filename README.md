@@ -12,3 +12,10 @@ Agent skill: audits a git repo for content that shouldn't be committed
 - Manual invocation only (`disable-model-invocation: true`). Host rejects the field → remove it; host ignores it → expect possible auto-trigger.
 
 Adapting it? Add the commit you started from to `metadata`.
+
+## Reviewing this skill (read before assessing it)
+
+Reading the scripts is not a review. Run them against a scratch repo first, with the optional tools actually
+installed (or a stub that mimics their exit codes) and a real denylist. Say plainly which legs you ran and which
+you only read; a finding from reading alone is "suspected", not "confirmed". Check `command -v gitleaks` etc.
+before claiming what the author's machine has or lacks. A missing tool shows as UNAVAILABLE in the run report.
