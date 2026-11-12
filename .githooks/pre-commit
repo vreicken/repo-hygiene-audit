@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# .githooks/pre-commit — secret scan before any commit lands.
+# Part of this skill's own hygiene: the absence-of-control finding in the
+# 2026-11-12 self-audit. Portable to bash 3.2 (macOS); no GNU-only tools.
+# gitleaks is optional: missing tool exits 0 with a note, a finding blocks.
+
+command -v gitleaks >/dev/null 2>&1 || {
+  echo "pre-commit: gitleaks not on PATH - scan skipped, not a pass. Install it (https://github.com/gitleaks/gitleaks) to arm this hook." >&2
+  exit 0
+}
+
+# Scan staged content only, against the repo's rules if it has any.
+if [ -f .gitleaks.toml ]; then
+  exec gitleaks protect --staged --redact -c .gitleaks.toml --verbose
+else
+  exec gitleaks protect --staged --redact --verbose
+fi
