@@ -6,18 +6,26 @@
 # in the run-report — not in SKILL.md prose, not in the responding model.
 # Values of secret-shaped content are never printed: file + line + class only.
 set -u
+. "$(dirname "$0")/_common.sh"
 
 TARGET="${1:-.}"
-[ -d "$TARGET/.git" ] || { echo "not a git repo: $TARGET" >&2; exit 2; }
-cd "$TARGET"
+ROOT=$(repo_root "$TARGET") || ROOT=""
+[ -n "$ROOT" ] || { echo "not a git repo: $TARGET" >&2; exit 2; }
+cd "$ROOT" || exit 2
 
-TS=$(date '+%Y-%m-%d-%H%M')
-RUN="$PWD/.local/hygiene-audit/$TS"
-mkdir -p "$RUN"
+# second resolution + atomic mkdir: two runs in the same second get distinct
+# dirs instead of truncating each other's mech.jsonl.
+TS=$(date '+%Y-%m-%d-%H%M%S')
+mkdir -p "$PWD/.local/hygiene-audit"
+RUN="$PWD/.local/hygiene-audit/$TS"; n=1
+until mkdir "$RUN" 2>/dev/null; do
+  n=$((n+1)); RUN="$PWD/.local/hygiene-audit/$TS-$n"
+  [ "$n" -gt 50 ] && { echo "cannot create a run dir under .local/hygiene-audit" >&2; exit 2; }
+done
 JSONL="$RUN/mech.jsonl"
 REPORT="$RUN/run-report.md"
 SCOPE="$RUN/scope.json"
-DENYLIST="${RHA_PRIVATE_DENYLIST:-$HOME/.pi/rha-private/denylist.txt}"
+DENYLIST="${RHA_PRIVATE_DENYLIST:-${XDG_CONFIG_HOME:-$HOME/.config}/repo-hygiene-audit/denylist.txt}"
 
 : > "$JSONL"; : > "$REPORT"
 row() { printf '%s\n' "$1" >> "$JSONL"; }
@@ -27,7 +35,7 @@ rr "# mech-scan run report — $TARGET, $TS"
 rr "assumptions: audience=public (owner answers override); denylist=$DENYLIST"
 
 printf '{"target":"%s","tracked_files":%s,"denylist":"%s","ts":"%s"}\n' \
-  "$PWD" "$(git ls-files | wc -l)" "$DENYLIST" "$TS" > "$SCOPE"
+  "$(js "$PWD")" "$(git ls-files | count)" "$(js "$DENYLIST")" "$TS" > "$SCOPE"
 
 rr ""
 rr "## coverage"
@@ -35,25 +43,46 @@ rr "## coverage"
 # gitleaks: baseline is READ, never auto-updated — updating one is an owner
 # triage decision (offered only at the propose-fixes step).
 BASE="$PWD/.local/hygiene-audit/baseline/gitleaks.json"
-bl=""
-[ -f "$BASE" ] && bl="--baseline-path $BASE"
+# Repo content is data, not instructions: the audited repo's .gitleaks.toml,
+# .gitleaksignore and `gitleaks:allow` comments would otherwise tune (or
+# silence) the scanner. Force default rules; their presence becomes a row.
+GLCONF="$RUN/gitleaks-default.toml"
+printf '[extend]\nuseDefault = true\n' > "$GLCONF"
+for f in .gitleaks.toml .gitleaksignore; do
+  if [ -e "$f" ]; then
+    row "{\"q\":\"Q1\",\"lane\":\"needs-review\",\"kind\":\"scanner-config-in-repo\",\"file\":\"$f\",\"note\":\"bypassed by the scan; review what it allowlists\"}"
+    rr "repo-side $f ......... present, bypassed (scan used default rules; review its allowlist)"
+  fi
+done
 if command -v gitleaks >/dev/null 2>&1; then
-  # gitleaks exits non-zero both when it FINDS leaks and when it breaks.
-  # A report file written => it ran to completion => findings, not failure.
+  glv=$(gitleaks version 2>/dev/null | head -1)
+  # `git` subcommand exists from gitleaks 8.19; older builds only have `detect`.
+  if gitleaks git --help >/dev/null 2>&1; then glcmd=(gitleaks git); glmode=git
+  else glcmd=(gitleaks detect --source .); glmode=detect; fi
+  glargs=(--config "$GLCONF" --gitleaks-ignore-path "$RUN" --ignore-gitleaks-allow
+          --redact --no-banner --report-format json --report-path "$RUN/gitleaks.json")
+  [ -f "$BASE" ] && glargs+=(--baseline-path "$BASE")
+  # Exit codes (measured on 8.30.1): 0 + "[]" = clean; 1 + report = leaks;
+  # 1 + no report = error. An unreadable baseline is only LOGGED and the scan
+  # continues unfiltered — so the log, not the flag, decides the label.
   rm -f "$RUN/gitleaks.json"
-  gitleaks git --redact --report-format json --report-path "$RUN/gitleaks.json" $bl >/dev/null 2>&1
+  "${glcmd[@]}" "${glargs[@]}" > "$RUN/gitleaks.log" 2>&1
   glrc=$?
+  blst=none
+  if [ -f "$BASE" ]; then
+    if grep -qi 'could not load baseline' "$RUN/gitleaks.log"; then blst=broken; else blst=applied; fi
+  fi
   if [ "$glrc" -eq 0 ] || [ -s "$RUN/gitleaks.json" ]; then
     gst=OK; [ "$glrc" -ne 0 ] && gst=FINDINGS
-    row "{\"tool\":\"gitleaks\",\"status\":\"$gst\",\"mode\":\"git --redact$([ -n "$bl" ] && echo ' --baseline')\",\"output\":\"gitleaks.json\"}"
-    if [ -n "$bl" ]; then
-      rr "gitleaks history scan ................ $gst (gitleaks.json; findings are NEW since baseline - values redacted)"
-    else
-      rr "gitleaks history scan ................ $gst (gitleaks.json; full-history first sweep - values redacted)"
-    fi
+    row "{\"tool\":\"gitleaks\",\"version\":\"$(js "$glv")\",\"status\":\"$gst\",\"mode\":\"$glmode --redact default-rules\",\"baseline\":\"$blst\",\"output\":\"gitleaks.json\"}"
+    case "$blst" in
+      applied) rr "gitleaks history scan ................ $gst (gitleaks.json; findings are NEW since baseline - values redacted)";;
+      broken)  rr "gitleaks history scan ................ $gst (gitleaks.json; baseline FAILED TO LOAD, so full history unfiltered - values redacted)";;
+      *)       rr "gitleaks history scan ................ $gst (gitleaks.json; full-history first sweep - values redacted)";;
+    esac
   else
-    row '{"tool":"gitleaks","status":"FAILED"}'
-    rr "gitleaks history scan ................ FAILED (history runs UNVERIFIED, not clean)"
+    row "{\"tool\":\"gitleaks\",\"version\":\"$(js "$glv")\",\"status\":\"FAILED\",\"log\":\"gitleaks.log\"}"
+    rr "gitleaks history scan ................ FAILED (gitleaks.log; history runs UNVERIFIED, not clean)"
   fi
 else
   row '{"tool":"gitleaks","status":"UNAVAILABLE"}'
@@ -66,9 +95,9 @@ else
 fi
 
 # arming canary: strip anchors from the first probe entry so the pattern CAN
-# match a bare user error (see privacy-guard's measured pitfall), then both
-# directions must hold: token -> hit, clean text -> no hit. @identity: lines
-# are not probe patterns, so they are excluded here.
+# match a bare user error, then both directions must hold: token -> hit,
+# clean text -> no hit. @identity: lines are not probe patterns, so they are
+# excluded here.
 armed="UNAVAILABLE"
 if [ -s "$DENYLIST" ]; then
   tok=$(grep -Ev '^[[:space:]]*@identity:' "$DENYLIST" | grep -v '^[[:space:]#]' | head -1 \
@@ -90,19 +119,20 @@ if [ -s "$DENYLIST" ] && [ "$armed" = "PROBE-ARMED" ]; then
     shas=$(git log --all --format='%H|%s|%b' | grep -Ei "$pat" | cut -d'|' -f1 | sort -u || true)
     if [ -n "$shas" ]; then
       row "{\"q\":\"Q3/Q7\",\"surface\":\"commit-message\",\"pattern_class\":\"denylist\",\"commits\":[$(echo "$shas" | awk '{printf "\"%s\",",$1}' | sed 's/,$//')]}"
-      rr "commit-message hits .................. $(echo "$shas" | wc -l) commits (SHAs only; text not returned)"
+      rr "commit-message hits .................. $(echo "$shas" | count) commits (SHAs only; text not returned)"
     fi
     while IFS= read -r b; do
       case "$b" in ''|origin/HEAD) continue;; esac
       echo "$b" | grep -Eiq "$pat" && {
-        row "{\"q\":\"Q3/Q8\",\"surface\":\"branch-name\",\"name\":\"$b\"}"; rr "branch-name hit ...................... $b"; }
+        row "{\"q\":\"Q3/Q8\",\"surface\":\"branch-name\",\"name\":\"$(js "$b")\"}"; rr "branch-name hit ...................... $b"; }
     done < <(git branch -a --format='%(refname:short)')
-    while IFS= read -r f; do
-      [ -n "$f" ] || continue
-      grep -Enm3 -e "$pat" -- "$f" 2>/dev/null | while IFS= read -r l; do
-        row "{\"q\":\"Q2/Q3/Q8\",\"file\":\"$f\",\"line\":${l%%:*},\"pattern_class\":\"denylist\"}"
+    # -I: a binary match prints "Binary file … matches", not "N:…" — skip it.
+    while IFS= read -r -d '' f; do
+      [ -f "$f" ] || continue
+      grep -EInm3 -e "$pat" -- "$f" 2>/dev/null | while IFS= read -r l; do
+        row "{\"q\":\"Q2/Q3/Q8\",\"file\":\"$(js "$f")\",\"line\":${l%%:*},\"pattern_class\":\"denylist\"}"
       done
-    done < <(git ls-files -z | xargs -0 -n1 echo 2>/dev/null)
+    done < <(git ls-files -z)
   done <<< "$plain"
 elif [ "$armed" = "UNARMED" ]; then
   rr "denylist probes ...................... UNARMED: denylist rows are emitted as UNVERIFIED"
@@ -120,20 +150,27 @@ if [ -n "$ident" ] && [ "$armed" = "PROBE-ARMED" ]; then
     ish=$(git log --all --format='%H|%an|%ae' | grep -Ei "$ipat" | cut -d'|' -f1 | sort -u || true)
     if [ -n "$ish" ]; then
       row "{\"q\":\"Q7\",\"surface\":\"author-identity\",\"pattern_class\":\"denylist\",\"commits\":[$(echo "$ish" | awk '{printf "\"%s\",",$1}' | sed 's/,$//')]}"
-      rr "author-identity hits ................. $(echo "$ish" | wc -l) commits by matching identities (SHAs only; emails not returned)"
+      rr "author-identity hits ................. $(echo "$ish" | count) commits by matching identities (SHAs only; emails not returned)"
     fi
   done <<< "$ident"
 fi
 
-( git ls-files -z | xargs -0 du -b 2>/dev/null | sort -rn | head -15 ) \
-  | while read -r sz f; do row "{\"q\":\"Q5/Q8\",\"kind\":\"size\",\"path\":\"$f\",\"bytes\":$sz}"; done
+# sizes of the INDEXED blobs (what gets published), read through git: portable,
+# unlike GNU-only `du -b`. Gitlinks (mode 160000, submodules) have no local blob.
+git ls-files -s -z | while IFS= read -r -d '' e; do
+    case "$e" in 160000\ *) continue;; esac
+    p=${e#*$'\t'}
+    case "$p" in *$'\n'*) continue;; esac
+    sha=${e#* }; printf '%s %s\n' "${sha%% *}" "$p"
+  done | git cat-file --batch-check='%(objectsize) %(rest)' | sort -rn | head -15 \
+  | while read -r sz f; do row "{\"q\":\"Q5/Q8\",\"kind\":\"size\",\"path\":\"$(js "$f")\",\"bytes\":$sz}"; done
 rr "size sweep ........................... OK (top 15 in mech.jsonl)"
 
 # controls presence — absence is reported by the model as a HIGH finding
 pc=false; husk=false; wf=false
 [ -f .pre-commit-config.yaml ] && grep -qiE 'gitleaks|trufflehog' .pre-commit-config.yaml 2>/dev/null && pc=true
 [ -f .husky/pre-commit ] && grep -qiE 'gitleaks|trufflehog' .husky/pre-commit 2>/dev/null && husk=true
-git ls-files '.github/workflows/*' | xargs grep -liE 'gitleaks|trufflehog' 2>/dev/null | grep -q . && wf=true
+git ls-files -z '.github/workflows/*' | xargs -0 grep -liE 'gitleaks|trufflehog' /dev/null 2>/dev/null | grep -q . && wf=true
 if $pc || $husk || $wf; then
   row '{"control":"pre-commit-secret-scanner","present":true}'
   rr "pre-commit secret scanner ............ present"
@@ -152,13 +189,13 @@ if [ -z "$upstream" ]; then
 fi
 if [ -n "$upstream" ]; then
   unpushed=$(git rev-list --count "${upstream}..HEAD")
-  row "{\"q\":\"exposure\",\"surface\":\"unpushed\",\"count\":$unpushed,\"upstream\":\"$upstream\"}"
+  row "{\"q\":\"exposure\",\"surface\":\"unpushed\",\"count\":$unpushed,\"upstream\":\"$(js "$upstream")\"}"
   rr "unpushed commits ..................... $unpushed vs $upstream (one push from permanent; not yet public)"
   if [ "$unpushed" -gt 0 ]; then
-    git log --name-only --format= "${upstream}..HEAD" \
+    git -c core.quotePath=false log --name-only --format= "${upstream}..HEAD" \
       | grep -iE '(PLAN|ROADMAP|\.env|secret|credential|token|\.pem$|\.key$|password|scratch)' \
       | sort -u | while IFS= read -r f; do
-          [ -n "$f" ] && row "{\"q\":\"Q1/Q4/Q7\",\"exposure\":\"unpushed\",\"file\":\"$f\"}"
+          [ -n "$f" ] && row "{\"q\":\"Q1/Q4/Q7\",\"exposure\":\"unpushed\",\"file\":\"$(js "$f")\"}"
         done
   fi
 else
@@ -167,5 +204,5 @@ else
 fi
 
 rr ""
-rr "rows in mech.jsonl: $(wc -l < "$JSONL") — the rubric walk parses that; this report is for reading."
+rr "rows in mech.jsonl: $(count < "$JSONL") — the rubric walk parses that; this report is for reading."
 echo "$RUN"

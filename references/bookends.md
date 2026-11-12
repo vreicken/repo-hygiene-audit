@@ -14,6 +14,9 @@ Read once, before trusting any line of a run report or verdicts file.
   neither finds. A passing audit does not mean the repo is **safe** — it
   means every rubric question got a deliberate answer on the files covered.
   A finding is not proof of malice either: finding ≠ hostile, clean ≠ safe.
+- The repo's own scanner tuning: `.gitleaks.toml`, `.gitleaksignore` and
+  `gitleaks:allow` comments are bypassed (default rules); their presence is
+  a Needs Review row, since an allowlist can hide exactly what we look for.
 - The future: an audit is a snapshot at a commit. When to re-run is owner's
   timing, not a warranty.
 - Sweeps: a file "unchanged since last sweep" is verified by content hash in
@@ -27,6 +30,9 @@ Read once, before trusting any line of a run report or verdicts file.
   Not-run and not-narrated: the row states the path/what-install-would-arm-it.
 - **SKIPPED** — announced before, declined by the owner; explicitly never
   reported as a clean result.
+- **GATED** — not run by default because the auditor would execute code
+  from the audited repo; `RHA_ALLOW_REPO_EXEC=1` arms it. Coverage is
+  UNVERIFIED, never clean.
 - **FAILED** — ran and errored; whatever it would have covered is
   UNVERIFIED, not clean. (Dependency auditors don't use FAILED for
   "found things": dep-audit rows carry FINDINGS for that, and NONZERO-EXIT
