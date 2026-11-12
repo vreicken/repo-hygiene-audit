@@ -92,8 +92,9 @@ or never should have existed. Lockfiles specifically fall under Q6, because
 
 Files where the standard practice genuinely splits:
 - `package-lock.json` / `pnpm-lock.yaml` — mainstream: commit for
-  applications (reproducible builds, CVE-aware lockfiles). This owner's
-  stated default: **do not commit** — treat as overcommitted to remove.
+  applications (reproducible builds, CVE-aware lockfiles). Some owners
+  default to **not** committing them; apply the owner's recorded default
+  when one exists, otherwise report the two-sided view.
 - `sonar-project.properties` — committed widely, but see Q2: only when fully
   generic (`projectKey`, `sources`, excludes). Any host/infra line moves it to
   Q2.
@@ -119,7 +120,7 @@ to if repo was public for long; commit-email setup for the metadata case.
 
 IDE config (`.idea/`, `.vscode/` with live settings), workspace files,
 `.scannerwork`, `temp/`, notes-from-other-machines, absolute paths
-(`E:\Projects\…`) anywhere in tracked files — these reveal the owner's
+(`C:\Users\<name>\…`, `/home/<name>/…`) anywhere in tracked files — these reveal the owner's
 directory layout and machine naming.
 
 Verdict: untrack + `.gitignore` + history sweep.
@@ -163,10 +164,11 @@ checked; record what was checked, not what someone said.
 ## Calibration examples
 
 **`sonar-project.properties` pointing at `http://127.0.0.1:9000`, commented
-with references to `pipeline/prompts/setup.md` and a sibling project name.**
+with references to an internal doc path (e.g. `docs/internal/ci-setup.md`)
+and a sibling project name.**
 - Fails Q2: URL + non-default port + a SonarQube instance exists on the
   machine. No credential present; every scanner stays silent; still a finding.
-- Also fails Q3: the comment vocabulary names a private pipeline doc and a
+- Also fails Q3: the comment vocabulary names a private internal doc and a
   sibling project. Double exposure in one file.
 - Verdict: untrack, keep local, document the shape publicly without the host
   line.
@@ -174,13 +176,13 @@ with references to `pipeline/prompts/setup.md` and a sibling project name.**
 **A 35 KB `PLAN.md` at repo root.**
 - Fails Q4. Uniquely invisible to tools, highest personal-information
   density, zero build value to a clone.
-- Verdict: untrack; note in stage 4 whether it was always tracked or was
+- Verdict: untrack; note in the finding row whether it was always tracked or was
   deleted later (history difference).
 
 **A committed `package-lock.json`.**
 - Passes Q1–Q5 except Q5-by-category; Q6 applies. Report as owner-policy
-  decision citing the owner's recorded default of not committing lockfiles,
-  with the mainstream-commit note alongside. No history-purge demand.
+  decision citing the owner's recorded default (if any), with the
+  mainstream-commit note alongside. No history-purge demand.
 
 ## Remediation map
 
